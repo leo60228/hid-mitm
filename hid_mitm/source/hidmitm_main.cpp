@@ -36,6 +36,7 @@ extern "C" {
     char   nx_inner_heap[INNER_HEAP_SIZE];
     
     void __libnx_initheap(void);
+    void __libnx_init_time(void);
     void __appInit(void);
     void __appExit(void);
 }

@@ -1,5 +1,6 @@
 #include <mutex>
 #include <map>
+#include <ctime>
 #include <switch.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -29,6 +30,8 @@ static std::vector<std::pair<u64, u64>> rebind_config;
 
 static Mutex configMutex, pkgMutex;
 static struct input_msg cur_fakegamepad_state = {0};
+
+static u64 aTimer;
 
 void add_shmem(u64 pid, SharedMemory *real_shmem, SharedMemory *fake_shmem)
 {
@@ -242,6 +245,45 @@ int apply_fake_gamepad(struct input_msg msg)
         curTmpEnt->joysticks[0].dy = msg.joy_l_y;
         curTmpEnt->joysticks[1].dx = msg.joy_r_x;
         curTmpEnt->joysticks[1].dy = msg.joy_r_y;
+
+        u64 time = 0;
+        timeGetCurrentTime(TimeType_Default, &time);
+        u64 seconds = time - aTimer;
+        if (seconds < 11 && seconds >= 10) curTmpEnt->buttons |= get_key_ind("KEY_A");
+    }
+    return gamepad;
+}
+
+int apply_abutton_pad(void)
+{
+    int gamepad = CONTROLLER_PLAYER_1;
+
+    memset(tmp_shmem_mem.controllers[gamepad].unk_1, 0, 0x40);
+    memset(&tmp_shmem_mem.controllers[gamepad].header, 0, sizeof(HidControllerHeader));
+
+    // Pro controller magic
+    tmp_shmem_mem.controllers[gamepad].unk_1[0] = 0x01;
+
+    tmp_shmem_mem.controllers[gamepad].header.singleColorBody = 0;
+    tmp_shmem_mem.controllers[gamepad].header.singleColorButtons = 0xFFFFFFFF;
+
+    //Joycon: 0x20000004
+    //Pro controller: 0x20000001
+    tmp_shmem_mem.controllers[gamepad].header.type = 0x20000001;
+
+    for (int layout = 0; layout < LAYOUT_DEFAULT + 1; layout++)
+    {
+        HidControllerLayout *currentTmpLayout = &tmp_shmem_mem.controllers[gamepad].layouts[layout];
+
+        int ent = currentTmpLayout->header.latestEntry;
+
+        HidControllerInputEntry *curTmpEnt = &currentTmpLayout->entries[ent];
+        curTmpEnt->connectionState = 1;
+        curTmpEnt->buttons = get_key_ind("KEY_A");
+        curTmpEnt->joysticks[0].dx = 0;
+        curTmpEnt->joysticks[0].dy = 0;
+        curTmpEnt->joysticks[1].dx = 0;
+        curTmpEnt->joysticks[1].dy = 0;
     }
     return gamepad;
 }
@@ -326,10 +368,14 @@ void copy_thread(void* _)
             shmem_copy(it->second.first, &tmp_shmem_mem);
             svcSleepThread(-1);
 
-            if (networking_enabled)
-            {
+            if (networking_enabled) {
                 apply_fake_gamepad(cur_fakegamepad_state);
             }
+
+            u64 time = 0;
+            timeGetCurrentTime(TimeType_Default, &time);
+            u64 seconds = time - aTimer;
+            if (seconds < 11 && seconds >= 10) apply_abutton_pad();
 
             for (int i = CONTROLLER_PLAYER_1; i <= CONTROLLER_HANDHELD; i++)
             {
@@ -361,6 +407,8 @@ void copy_thread(void* _)
 
 void copyThreadInitialize()
 {
+    timeGetCurrentTime(TimeType_Default, &aTimer);
+
     mutexInit(&configMutex);
     mutexInit(&pkgMutex);
     loadConfig();
